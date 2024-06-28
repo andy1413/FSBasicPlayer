@@ -1,5 +1,5 @@
 //
-//  FSPlay.h
+//  WZFFPlay.h
 //  ffplayios
 //
 //  Created by andy on 2023/5/9.
@@ -55,10 +55,11 @@ extern "C" {
 }
 #endif
 
-#include "FSCmdUtils.hpp"
+#include "WZFFCmdUtils.hpp"
 
-#define MAX_QUEUE_SIZE (15 * 1024 * 1024)
-#define MIN_FRAMES 25
+#define MAX_QUEUE_SIZE (60 * 1024 * 1024)
+#define MIN_FRAMES 100
+#define MIN_SECONDS 4.0
 #define EXTERNAL_CLOCK_MIN_FRAMES 2
 #define EXTERNAL_CLOCK_MAX_FRAMES 10
 
@@ -118,6 +119,8 @@ typedef struct PacketQueue {
     int serial = 0;
     SDL_mutex *mutex = NULL;
     SDL_cond *cond = NULL;
+    
+    int is_buffer_indicator = 0;
 } PacketQueue;
 
 #define VIDEO_PICTURE_QUEUE_SIZE 3
@@ -302,23 +305,28 @@ typedef struct VideoState {
     int last_video_stream = 0, last_audio_stream = 0, last_subtitle_stream = 0;
 
     SDL_cond *continue_read_thread = NULL;
+    int buffering_on = 0;
+    SDL_mutex  *play_mutex = NULL;
+    PacketQueue *buffer_indicator_queue = NULL;
 } VideoState;
 
-enum FSPlayStatus {
-    FSPlayStatus_completed,
-    FSPlayStatus_error,
+enum WZFFPlayStatus {
+    WZFFPlayStatus_loading,
+    WZFFPlayStatus_playing,
+    WZFFPlayStatus_completed,
+    WZFFPlayStatus_error,
 };
 
 typedef void(*SetParamsCallback)(void *);
 typedef void(*RenderFrameCallback)(void *, VideoFrame *);
-typedef void(*PlayStatusChangeCallback)(void *, enum FSPlayStatus);
+typedef void(*PlayStatusChangeCallback)(void *, enum WZFFPlayStatus);
 
-class FSPlay {
+class WZFFPlay {
 public:
-    FSPlay();
+    WZFFPlay();
     
     VideoState *is = NULL;
-    FSCmdUtils *cmdUtils = NULL;
+    WZFFCmdUtils *cmdUtils = NULL;
     
     void sdl_audio_callback(void *opaque, uint8_t *stream, int len);
     int audio_thread(void *arg);
@@ -334,13 +342,15 @@ public:
     int ffplay_main(void *openglesView, char *url, SetParamsCallback paramsCallback, RenderFrameCallback renderCallback);
     void ffplay_stream_close();
     void ffplay_pause();
+    void ffplay_setMuted(int muted);
+    long ffplay_getTimeIntervalMS();
     
     int opt_add_vfilter(void *optctx, const char *opt, const char *arg);
     void set_format_opt(const char *key, const char *value);
     int set_input_format(const char *short_name);
+    int opt_sync(void *optctx, const char *opt, const char *arg);
     
 private:
-    RenderFrameCallback renderCallback = NULL;
     int play_serial = 1;
     /* options specified by the user */
     AVInputFormat *file_iformat = NULL;
@@ -361,7 +371,7 @@ private:
     int borderless = 0;
     int alwaysontop = 0;
     int startup_volume = 100;
-    int show_status = -1;
+    int show_status = 0;
     int av_sync_type = AV_SYNC_AUDIO_MASTER;
     int64_t duration = AV_NOPTS_VALUE;
     int fast = 0;
@@ -425,8 +435,11 @@ private:
     };
 
     void *openglesView = NULL;
+    RenderFrameCallback renderCallback = NULL;
     SwsContext *swsContext = NULL;
     AVFrame *rgbFrame = NULL;
+    int bufferEnoughPlay = 0;
+    
     int packet_queue_put_private(PacketQueue *q, AVPacket *pkt);
     int packet_queue_put(PacketQueue *q, AVPacket *pkt);
     int packet_queue_put_nullpacket(PacketQueue *q, int stream_index);
@@ -435,6 +448,10 @@ private:
     void packet_queue_destroy(PacketQueue *q);
     void packet_queue_abort(PacketQueue *q);
     void packet_queue_start(PacketQueue *q);
+    void ffp_toggle_buffering_l(int buffering_on);
+    void ffp_toggle_buffering(int start_buffering);
+    void ffp_check_buffering_l();
+    int packet_queue_get_or_buffering(PacketQueue *q, AVPacket *pkt, int *serial, int *finished);
     int packet_queue_get(PacketQueue *q, AVPacket *pkt, int block, int *serial);
     void decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue, SDL_cond *empty_queue_cond);
     int decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub);
@@ -499,7 +516,6 @@ private:
     int opt_height(void *optctx, const char *opt, const char *arg);
     int opt_format(void *optctx, const char *opt, const char *arg);
     int opt_frame_pix_fmt(void *optctx, const char *opt, const char *arg);
-    int opt_sync(void *optctx, const char *opt, const char *arg);
     int opt_seek(void *optctx, const char *opt, const char *arg);
     int opt_duration(void *optctx, const char *opt, const char *arg);
     int opt_show_mode(void *optctx, const char *opt, const char *arg);

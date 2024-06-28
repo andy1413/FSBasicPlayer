@@ -23,7 +23,7 @@
  * simple media player based on the FFmpeg libraries
  */
 
-#include "FSPlay.hpp"
+#include "WZFFPlay.hpp"
 
 const char program_name[20] = "ffplay";
 const int program_birth_year = 2003;
@@ -31,14 +31,16 @@ unsigned sws_flags = SWS_BICUBIC;
 
 static int init_serial = 1;
 
+#define fftime_to_milliseconds(ts) (av_rescale(ts, 1000, AV_TIME_BASE))
+
 void fs_log_set_callback(void (*callback)(void *, int, const char *, va_list)) {
     av_log_set_callback(callback);
 }
 
-FSPlay::FSPlay() {}
+WZFFPlay::WZFFPlay() {}
 
 #if CONFIG_AVFILTER
-int FSPlay::opt_add_vfilter(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_add_vfilter(void *optctx, const char *opt, const char *arg)
 {
     GROW_ARRAY(vfilters_list, nb_vfilters);
     vfilters_list[nb_vfilters - 1] = (char *)arg;
@@ -47,7 +49,7 @@ int FSPlay::opt_add_vfilter(void *optctx, const char *opt, const char *arg)
 #endif
 
 inline
-int FSPlay::cmp_audio_fmts(enum AVSampleFormat fmt1, int64_t channel_count1,
+int WZFFPlay::cmp_audio_fmts(enum AVSampleFormat fmt1, int64_t channel_count1,
                    enum AVSampleFormat fmt2, int64_t channel_count2)
 {
     /* If channel count == 1, planar and non-planar formats are the same */
@@ -58,7 +60,7 @@ int FSPlay::cmp_audio_fmts(enum AVSampleFormat fmt1, int64_t channel_count1,
 }
 
 inline
-int64_t FSPlay::get_valid_channel_layout(int64_t channel_layout, int channels)
+int64_t WZFFPlay::get_valid_channel_layout(int64_t channel_layout, int channels)
 {
     if (channel_layout && av_get_channel_layout_nb_channels(channel_layout) == channels)
         return channel_layout;
@@ -66,7 +68,7 @@ int64_t FSPlay::get_valid_channel_layout(int64_t channel_layout, int channels)
         return 0;
 }
 
-int FSPlay::packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
+int WZFFPlay::packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
 {
     MyAVPacketList *pkt1;
 
@@ -95,7 +97,7 @@ int FSPlay::packet_queue_put_private(PacketQueue *q, AVPacket *pkt)
     return 0;
 }
 
-int FSPlay::packet_queue_put(PacketQueue *q, AVPacket *pkt)
+int WZFFPlay::packet_queue_put(PacketQueue *q, AVPacket *pkt)
 {
     int ret;
 
@@ -104,12 +106,15 @@ int FSPlay::packet_queue_put(PacketQueue *q, AVPacket *pkt)
     SDL_UnlockMutex(q->mutex);
 
     if (pkt != &flush_pkt && ret < 0)
-        av_packet_unref(pkt);
+        if (pkt->size > 0) {
+            av_packet_unref(pkt);
+        }
+        
 
     return ret;
 }
 
-int FSPlay::packet_queue_put_nullpacket(PacketQueue *q, int stream_index)
+int WZFFPlay::packet_queue_put_nullpacket(PacketQueue *q, int stream_index)
 {
     AVPacket pkt1, *pkt = &pkt1;
     av_init_packet(pkt);
@@ -120,7 +125,7 @@ int FSPlay::packet_queue_put_nullpacket(PacketQueue *q, int stream_index)
 }
 
 /* packet queue handling */
-int FSPlay::packet_queue_init(PacketQueue *q)
+int WZFFPlay::packet_queue_init(PacketQueue *q)
 {
     memset(q, 0, sizeof(PacketQueue));
     q->mutex = SDL_CreateMutex();
@@ -137,14 +142,17 @@ int FSPlay::packet_queue_init(PacketQueue *q)
     return 0;
 }
 
-void FSPlay::packet_queue_flush(PacketQueue *q)
+void WZFFPlay::packet_queue_flush(PacketQueue *q)
 {
     MyAVPacketList *pkt, *pkt1;
 
     SDL_LockMutex(q->mutex);
     for (pkt = q->first_pkt; pkt; pkt = pkt1) {
         pkt1 = pkt->next;
-        av_packet_unref(&pkt->pkt);
+        if (pkt->pkt.size > 0) {
+            av_packet_unref(&pkt->pkt);
+        }
+        
         av_freep(&pkt);
     }
     pkt1 = NULL;
@@ -156,14 +164,14 @@ void FSPlay::packet_queue_flush(PacketQueue *q)
     SDL_UnlockMutex(q->mutex);
 }
 
-void FSPlay::packet_queue_destroy(PacketQueue *q)
+void WZFFPlay::packet_queue_destroy(PacketQueue *q)
 {
     packet_queue_flush(q);
     SDL_DestroyMutex(q->mutex);
     SDL_DestroyCond(q->cond);
 }
 
-void FSPlay::packet_queue_abort(PacketQueue *q)
+void WZFFPlay::packet_queue_abort(PacketQueue *q)
 {
     SDL_LockMutex(q->mutex);
 
@@ -174,7 +182,7 @@ void FSPlay::packet_queue_abort(PacketQueue *q)
     SDL_UnlockMutex(q->mutex);
 }
 
-void FSPlay::packet_queue_start(PacketQueue *q)
+void WZFFPlay::packet_queue_start(PacketQueue *q)
 {
     SDL_LockMutex(q->mutex);
     q->abort_request = 0;
@@ -182,8 +190,75 @@ void FSPlay::packet_queue_start(PacketQueue *q)
     SDL_UnlockMutex(q->mutex);
 }
 
+void WZFFPlay::ffp_toggle_buffering_l(int buffering_on)
+{
+    VideoState *is = this->is;
+    if (buffering_on && !is->buffering_on) {
+        av_log(this, AV_LOG_DEBUG, "ffp_toggle_buffering_l: loading\n");
+        is->buffering_on = 1;
+        if (statusChangeCallback && openglesView)
+            statusChangeCallback(openglesView, WZFFPlayStatus_loading);
+    } else if (!buffering_on && is->buffering_on){
+        av_log(this, AV_LOG_DEBUG, "ffp_toggle_buffering_l: playing\n");
+        is->buffering_on = 0;
+        if (statusChangeCallback && openglesView)
+            statusChangeCallback(openglesView, WZFFPlayStatus_playing);
+    }
+}
+
+void WZFFPlay::ffp_toggle_buffering(int start_buffering)
+{
+    SDL_LockMutex(this->is->play_mutex);
+    ffp_toggle_buffering_l(start_buffering);
+    SDL_UnlockMutex(this->is->play_mutex);
+}
+
+void WZFFPlay::ffp_check_buffering_l()
+{
+    int min_frames = 1;
+    VideoState *is = this->is;
+
+    if (is->buffer_indicator_queue && is->buffer_indicator_queue->nb_packets > 0) {
+        if ((is->audioq.nb_packets >= min_frames || is->audio_stream < 0 ||
+             is->audioq.abort_request) &&
+            (is->videoq.nb_packets >= min_frames || is->video_stream < 0 ||
+             is->videoq.abort_request)) {
+            ffp_toggle_buffering(0);
+        }
+    }
+}
+
+int WZFFPlay::packet_queue_get_or_buffering(PacketQueue *q, AVPacket *pkt, int *serial, int *finished)
+{
+    assert(finished);
+
+    while (1) {
+        int new_packet = packet_queue_get(q, pkt, 0, serial);
+        if (new_packet < 0)
+            return -1;
+        else if (new_packet == 0) {
+            if (q->is_buffer_indicator && !*finished)
+                ffp_toggle_buffering(1);
+            new_packet = packet_queue_get(q, pkt, 1, serial);
+            if (new_packet < 0)
+                return -1;
+        }
+
+        if (*finished == *serial) {
+            if (pkt->size > 0) {
+                av_packet_unref(pkt);
+            }
+            continue;
+        }
+        else
+            break;
+    }
+
+    return 1;
+}
+
 /* return < 0 if aborted, 0 if no packet and > 0 if packet.  */
-int FSPlay::packet_queue_get(PacketQueue *q, AVPacket *pkt, int block, int *serial)
+int WZFFPlay::packet_queue_get(PacketQueue *q, AVPacket *pkt, int block, int *serial)
 {
     MyAVPacketList *pkt1;
     int ret;
@@ -195,7 +270,6 @@ int FSPlay::packet_queue_get(PacketQueue *q, AVPacket *pkt, int block, int *seri
             ret = -1;
             break;
         }
-
         pkt1 = q->first_pkt;
         if (pkt1) {
             q->first_pkt = pkt1->next;
@@ -221,7 +295,7 @@ int FSPlay::packet_queue_get(PacketQueue *q, AVPacket *pkt, int block, int *seri
     return ret;
 }
 
-void FSPlay::decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue, SDL_cond *empty_queue_cond) {
+void WZFFPlay::decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue, SDL_cond *empty_queue_cond) {
     memset(d, 0, sizeof(Decoder));
     d->avctx = avctx;
     d->queue = queue;
@@ -230,7 +304,7 @@ void FSPlay::decoder_init(Decoder *d, AVCodecContext *avctx, PacketQueue *queue,
     d->pkt_serial = -1;
 }
 
-int FSPlay::decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
+int WZFFPlay::decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
     int ret = AVERROR(EAGAIN);
 
     for (;;) {
@@ -284,12 +358,14 @@ int FSPlay::decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
                 av_packet_move_ref(&pkt, &d->pkt);
                 d->packet_pending = 0;
             } else {
-                if (packet_queue_get(d->queue, &pkt, 1, &d->pkt_serial) < 0)
+                if (packet_queue_get_or_buffering(d->queue, &pkt, &d->pkt_serial, &d->finished) < 0)
                     return -1;
             }
             if (d->queue->serial == d->pkt_serial)
                 break;
-            av_packet_unref(&pkt);
+            if (pkt.size > 0) {
+                av_packet_unref(&pkt);
+            }
         } while (1);
 
         if (pkt.data == flush_pkt.data) {
@@ -317,24 +393,28 @@ int FSPlay::decoder_decode_frame(Decoder *d, AVFrame *frame, AVSubtitle *sub) {
                     av_packet_move_ref(&d->pkt, &pkt);
                 }
             }
-            av_packet_unref(&pkt);
+            if (pkt.size > 0) {
+                av_packet_unref(&pkt);
+            }
         }
     }
 }
 
-void FSPlay::decoder_destroy(Decoder *d) {
-    av_packet_unref(&d->pkt);
+void WZFFPlay::decoder_destroy(Decoder *d) {
+    if (d->pkt.size > 0) {
+        av_packet_unref(&d->pkt);
+    }
     avcodec_free_context(&d->avctx);
     d->avctx = NULL;
 }
 
-void FSPlay::frame_queue_unref_item(Frame *vp)
+void WZFFPlay::frame_queue_unref_item(Frame *vp)
 {
     av_frame_unref(vp->frame);
     avsubtitle_free(&vp->sub);
 }
 
-int FSPlay::frame_queue_init(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last)
+int WZFFPlay::frame_queue_init(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last)
 {
     int i;
     memset(f, 0, sizeof(FrameQueue));
@@ -355,7 +435,7 @@ int FSPlay::frame_queue_init(FrameQueue *f, PacketQueue *pktq, int max_size, int
     return 0;
 }
 
-void FSPlay::frame_queue_destory(FrameQueue *f)
+void WZFFPlay::frame_queue_destory(FrameQueue *f)
 {
     int i;
     for (i = 0; i < f->max_size; i++) {
@@ -368,29 +448,29 @@ void FSPlay::frame_queue_destory(FrameQueue *f)
     SDL_DestroyCond(f->cond);
 }
 
-void FSPlay::frame_queue_signal(FrameQueue *f)
+void WZFFPlay::frame_queue_signal(FrameQueue *f)
 {
     SDL_LockMutex(f->mutex);
     SDL_CondSignal(f->cond);
     SDL_UnlockMutex(f->mutex);
 }
 
-Frame *FSPlay::frame_queue_peek(FrameQueue *f)
+Frame *WZFFPlay::frame_queue_peek(FrameQueue *f)
 {
     return &f->queue[(f->rindex + f->rindex_shown) % f->max_size];
 }
 
-Frame *FSPlay::frame_queue_peek_next(FrameQueue *f)
+Frame *WZFFPlay::frame_queue_peek_next(FrameQueue *f)
 {
     return &f->queue[(f->rindex + f->rindex_shown + 1) % f->max_size];
 }
 
-Frame *FSPlay::frame_queue_peek_last(FrameQueue *f)
+Frame *WZFFPlay::frame_queue_peek_last(FrameQueue *f)
 {
     return &f->queue[f->rindex];
 }
 
-Frame *FSPlay::frame_queue_peek_writable(FrameQueue *f)
+Frame *WZFFPlay::frame_queue_peek_writable(FrameQueue *f)
 {
     /* wait until we have space to put a new frame */
     SDL_LockMutex(f->mutex);
@@ -406,7 +486,7 @@ Frame *FSPlay::frame_queue_peek_writable(FrameQueue *f)
     return &f->queue[f->windex];
 }
 
-Frame *FSPlay::frame_queue_peek_readable(FrameQueue *f)
+Frame *WZFFPlay::frame_queue_peek_readable(FrameQueue *f)
 {
     /* wait until we have a readable a new frame */
     SDL_LockMutex(f->mutex);
@@ -422,7 +502,7 @@ Frame *FSPlay::frame_queue_peek_readable(FrameQueue *f)
     return &f->queue[(f->rindex + f->rindex_shown) % f->max_size];
 }
 
-void FSPlay::frame_queue_push(FrameQueue *f)
+void WZFFPlay::frame_queue_push(FrameQueue *f)
 {
     if (++f->windex == f->max_size)
         f->windex = 0;
@@ -432,7 +512,7 @@ void FSPlay::frame_queue_push(FrameQueue *f)
     SDL_UnlockMutex(f->mutex);
 }
 
-void FSPlay::frame_queue_next(FrameQueue *f)
+void WZFFPlay::frame_queue_next(FrameQueue *f)
 {
     if (f->keep_last && !f->rindex_shown) {
         f->rindex_shown = 1;
@@ -448,13 +528,13 @@ void FSPlay::frame_queue_next(FrameQueue *f)
 }
 
 /* return the number of undisplayed frames in the queue */
-int FSPlay::frame_queue_nb_remaining(FrameQueue *f)
+int WZFFPlay::frame_queue_nb_remaining(FrameQueue *f)
 {
     return f->size - f->rindex_shown;
 }
 
 /* return last shown position */
-int64_t FSPlay::frame_queue_last_pos(FrameQueue *f)
+int64_t WZFFPlay::frame_queue_last_pos(FrameQueue *f)
 {
     Frame *fp = &f->queue[f->rindex];
     if (f->rindex_shown && fp->serial == f->pktq->serial)
@@ -463,7 +543,7 @@ int64_t FSPlay::frame_queue_last_pos(FrameQueue *f)
         return -1;
 }
 
-void FSPlay::decoder_abort(Decoder *d, FrameQueue *fq)
+void WZFFPlay::decoder_abort(Decoder *d, FrameQueue *fq)
 {
     packet_queue_abort(d->queue);
     frame_queue_signal(fq);
@@ -472,7 +552,7 @@ void FSPlay::decoder_abort(Decoder *d, FrameQueue *fq)
     packet_queue_flush(d->queue);
 }
 
-void FSPlay::copyFrameData(uint8_t *src, uint8_t *dst, int linesize, int width, int height) {
+void WZFFPlay::copyFrameData(uint8_t *src, uint8_t *dst, int linesize, int width, int height) {
     width = FFMIN(linesize, width);
     memset(dst, 0, width * height);
     for (int i = 0; i < height; ++i) {
@@ -482,7 +562,7 @@ void FSPlay::copyFrameData(uint8_t *src, uint8_t *dst, int linesize, int width, 
     }
 }
 
-void FSPlay::video_image_display(VideoState *is)
+void WZFFPlay::video_image_display(VideoState *is)
 {
     Frame *vp;
 
@@ -490,15 +570,16 @@ void FSPlay::video_image_display(VideoState *is)
     
     if (rgbFrame == NULL) {
         rgbFrame = av_frame_alloc();
-        av_image_alloc(rgbFrame->data, rgbFrame->linesize, vp->width, vp->height, AV_PIX_FMT_RGB24, 1);
     }
-    
-    enum AVPixelFormat sw_pix_fmt = is->viddec.avctx->sw_pix_fmt;
-    if (swsContext == NULL) {
-        swsContext = sws_getContext(vp->width, vp->height, sw_pix_fmt, vp->width, vp->height, AV_PIX_FMT_RGB24, SWS_BILINEAR, NULL, NULL, NULL);
-    }
-    
+    av_image_alloc(rgbFrame->data, rgbFrame->linesize, vp->width, vp->height, AV_PIX_FMT_RGB24, 1);
+
+    enum AVPixelFormat sw_pix_fmt = (enum AVPixelFormat)(vp->format);
+
+    swsContext = sws_getContext(vp->width, vp->height, sw_pix_fmt, vp->width, vp->height, AV_PIX_FMT_RGB24, SWS_BILINEAR, NULL, NULL, NULL);
+
+    SDL_LockMutex(is->pictq.mutex);
     sws_scale(swsContext, vp->frame->data, vp->frame->linesize, 0, vp->frame->height, rgbFrame->data, rgbFrame->linesize);
+    SDL_UnlockMutex(is->pictq.mutex);
     
     VideoFrame *videoFrame = (VideoFrame *)malloc(sizeof(VideoFrame));
     videoFrame->width = vp->width;
@@ -508,18 +589,22 @@ void FSPlay::video_image_display(VideoState *is)
     
     videoFrame->format = AV_PIX_FMT_RGB24;
     copyFrameData(rgbFrame->data[0], videoFrame->pixels[0], rgbFrame->linesize[0], vp->width * 3, vp->height);
-    
-    renderCallback(openglesView, videoFrame);
+    if (renderCallback != NULL && openglesView != NULL) {
+        renderCallback(openglesView, videoFrame);
+    }
     free(videoFrame->pixels[0]);
     free(videoFrame);
+    av_freep(&rgbFrame->data[0]);
+    sws_freeContext(swsContext);
+    swsContext = NULL;
 }
 
-inline int FSPlay::compute_mod(int a, int b)
+inline int WZFFPlay::compute_mod(int a, int b)
 {
     return a < 0 ? a%b + b : a%b;
 }
 
-void FSPlay::stream_component_close(VideoState *is, int stream_index)
+void WZFFPlay::stream_component_close(VideoState *is, int stream_index)
 {
     AVFormatContext *ic = is->ic;
     AVCodecParameters *codecpar;
@@ -577,7 +662,7 @@ void FSPlay::stream_component_close(VideoState *is, int stream_index)
     }
 }
 
-void FSPlay::stream_close(VideoState *is)
+void WZFFPlay::stream_close(VideoState *is)
 {
     /* XXX: use a special url_shutdown call to abort parse cleanly */
     is->abort_request = 1;
@@ -595,8 +680,10 @@ void FSPlay::stream_close(VideoState *is)
     if (is->subtitle_stream >= 0)
         stream_component_close(is, is->subtitle_stream);
 
-    avformat_close_input(&is->ic);
-    is->ic = NULL;
+    if (is->ic != NULL) {
+        avformat_close_input(&is->ic);
+        is->ic = NULL;
+    }
 
     packet_queue_destroy(&is->videoq);
     packet_queue_destroy(&is->audioq);
@@ -607,6 +694,7 @@ void FSPlay::stream_close(VideoState *is)
     frame_queue_destory(&is->sampq);
     frame_queue_destory(&is->subpq);
     SDL_DestroyCond(is->continue_read_thread);
+    SDL_DestroyMutex(is->play_mutex);
     sws_freeContext(is->img_convert_ctx);
     is->img_convert_ctx = NULL;
     sws_freeContext(is->sub_convert_ctx);
@@ -629,11 +717,12 @@ void FSPlay::stream_close(VideoState *is)
     }
 }
 
-void FSPlay::ffplay_stream_close() {
-    if (is == NULL || is->ic == NULL || is->abort_request == 1) {
+void WZFFPlay::ffplay_stream_close() {
+    renderCallback = NULL;
+    openglesView = NULL;
+    if (is == NULL || is->abort_request == 1) {
         return;
     }
-    is->abort_request = 1;
     stream_close(is);
     is = NULL;
 #if CONFIG_AVFILTER
@@ -641,21 +730,25 @@ void FSPlay::ffplay_stream_close() {
     nb_vfilters = 0;
 #endif
     avformat_network_deinit();
+    
+    start_time = AV_NOPTS_VALUE;
+    audio_disable = 0;
+    file_iformat = NULL;
 }
 
 void sigterm_handler(int sig)
 {
-    printf("[FSPlay signal]:%d", sig);
+    printf("[WZFFPlay signal]:%d", sig);
 }
 
 /* display the current picture, if any */
-void FSPlay::video_display(VideoState *is)
+void WZFFPlay::video_display(VideoState *is)
 {
     if (is->video_st)
         video_image_display(is);
 }
 
-double FSPlay::get_clock(Clock *c)
+double WZFFPlay::get_clock(Clock *c)
 {
     if (*c->queue_serial != c->serial)
         return NAN;
@@ -667,7 +760,7 @@ double FSPlay::get_clock(Clock *c)
     }
 }
 
-void FSPlay::set_clock_at(Clock *c, double pts, int serial, double time)
+void WZFFPlay::set_clock_at(Clock *c, double pts, int serial, double time)
 {
     c->pts = pts;
     c->last_updated = time;
@@ -675,19 +768,19 @@ void FSPlay::set_clock_at(Clock *c, double pts, int serial, double time)
     c->serial = serial;
 }
 
-void FSPlay::set_clock(Clock *c, double pts, int serial)
+void WZFFPlay::set_clock(Clock *c, double pts, int serial)
 {
     double time = av_gettime_relative() / 1000000.0;
     set_clock_at(c, pts, serial, time);
 }
 
-void FSPlay::set_clock_speed(Clock *c, double speed)
+void WZFFPlay::set_clock_speed(Clock *c, double speed)
 {
     set_clock(c, get_clock(c), c->serial);
     c->speed = speed;
 }
 
-void FSPlay::init_clock(Clock *c, int *queue_serial)
+void WZFFPlay::init_clock(Clock *c, int *queue_serial)
 {
     c->speed = 1.0;
     c->paused = 0;
@@ -695,7 +788,7 @@ void FSPlay::init_clock(Clock *c, int *queue_serial)
     set_clock(c, NAN, -1);
 }
 
-void FSPlay::sync_clock_to_slave(Clock *c, Clock *slave)
+void WZFFPlay::sync_clock_to_slave(Clock *c, Clock *slave)
 {
     double clock = get_clock(c);
     double slave_clock = get_clock(slave);
@@ -703,7 +796,7 @@ void FSPlay::sync_clock_to_slave(Clock *c, Clock *slave)
         set_clock(c, slave_clock, slave->serial);
 }
 
-int FSPlay::get_master_sync_type(VideoState *is) {
+int WZFFPlay::get_master_sync_type(VideoState *is) {
     if (is->av_sync_type == AV_SYNC_VIDEO_MASTER) {
         if (is->video_st)
             return AV_SYNC_VIDEO_MASTER;
@@ -720,7 +813,7 @@ int FSPlay::get_master_sync_type(VideoState *is) {
 }
 
 /* get the current master clock value */
-double FSPlay::get_master_clock(VideoState *is)
+double WZFFPlay::get_master_clock(VideoState *is)
 {
     double val;
 
@@ -738,7 +831,41 @@ double FSPlay::get_master_clock(VideoState *is)
     return val;
 }
 
-void FSPlay::check_external_clock_speed(VideoState *is) {
+long WZFFPlay::ffplay_getTimeIntervalMS()
+{
+    VideoState *is = this->is;
+    if (!is || !is->ic)
+        return 0;
+
+    int64_t start_time = is->ic->start_time;
+    int64_t start_diff = 0;
+    if (start_time > 0 && start_time != AV_NOPTS_VALUE)
+        start_diff = fftime_to_milliseconds(start_time);
+
+    int64_t pos = 0;
+    double pos_clock = get_master_clock(is);
+    if (isnan(pos_clock)) {
+        pos = fftime_to_milliseconds(is->seek_pos);
+    } else {
+        pos = pos_clock * 1000;
+    }
+
+    // If using REAL time and not ajusted, then return the real pos as calculated from the stream
+    // the use case for this is primarily when using a custom non-seekable data source that starts
+    // with a buffer that is NOT the start of the stream.  We want the get_current_position to
+    // return the time in the stream, and not the player's internal clock.
+    if (true) {
+        return (long)pos;
+    }
+
+    if (pos < 0 || pos < start_diff)
+        return 0;
+
+    int64_t adjust_pos = pos - start_diff;
+    return (long)adjust_pos;
+}
+
+void WZFFPlay::check_external_clock_speed(VideoState *is) {
    if (is->video_stream >= 0 && is->videoq.nb_packets <= EXTERNAL_CLOCK_MIN_FRAMES ||
        is->audio_stream >= 0 && is->audioq.nb_packets <= EXTERNAL_CLOCK_MIN_FRAMES) {
        set_clock_speed(&is->extclk, FFMAX(EXTERNAL_CLOCK_SPEED_MIN, is->extclk.speed - EXTERNAL_CLOCK_SPEED_STEP));
@@ -753,7 +880,7 @@ void FSPlay::check_external_clock_speed(VideoState *is) {
 }
 
 /* seek in the stream */
-void FSPlay::stream_seek(VideoState *is, int64_t pos, int64_t rel, int seek_by_bytes)
+void WZFFPlay::stream_seek(VideoState *is, int64_t pos, int64_t rel, int seek_by_bytes)
 {
     if (!is->seek_req) {
         is->seek_pos = pos;
@@ -767,7 +894,7 @@ void FSPlay::stream_seek(VideoState *is, int64_t pos, int64_t rel, int seek_by_b
 }
 
 /* pause or resume the video */
-void FSPlay::stream_toggle_pause(VideoState *is)
+void WZFFPlay::stream_toggle_pause(VideoState *is)
 {
     if (is->paused) {
         is->frame_timer += av_gettime_relative() / 1000000.0 - is->vidclk.last_updated;
@@ -780,29 +907,35 @@ void FSPlay::stream_toggle_pause(VideoState *is)
     is->paused = is->audclk.paused = is->vidclk.paused = is->extclk.paused = !is->paused;
 }
 
-void FSPlay::toggle_pause(VideoState *is)
+void WZFFPlay::toggle_pause(VideoState *is)
 {
     stream_toggle_pause(is);
     is->step = 0;
 }
 
-void FSPlay::ffplay_pause() {
+void WZFFPlay::ffplay_pause() {
     toggle_pause(is);
 }
 
-void FSPlay::toggle_mute(VideoState *is)
+void WZFFPlay::ffplay_setMuted(int muted) {
+    if (is != NULL) {
+        is->muted = muted;
+    }
+}
+
+void WZFFPlay::toggle_mute(VideoState *is)
 {
     is->muted = !is->muted;
 }
 
-void FSPlay::update_volume(VideoState *is, int sign, double step)
+void WZFFPlay::update_volume(VideoState *is, int sign, double step)
 {
     double volume_level = is->audio_volume ? (20 * log(is->audio_volume / (double)SDL_MIX_MAXVOLUME) / log(10)) : -1000.0;
     int new_volume = lrint(SDL_MIX_MAXVOLUME * pow(10.0, (volume_level + sign * step) / 20.0));
     is->audio_volume = av_clip(is->audio_volume == new_volume ? (is->audio_volume + sign) : new_volume, 0, SDL_MIX_MAXVOLUME);
 }
 
-void FSPlay::step_to_next_frame(VideoState *is)
+void WZFFPlay::step_to_next_frame(VideoState *is)
 {
     /* if the stream is paused unpause it, then step */
     if (is->paused)
@@ -810,7 +943,7 @@ void FSPlay::step_to_next_frame(VideoState *is)
     is->step = 1;
 }
 
-double FSPlay::compute_target_delay(double delay, VideoState *is)
+double WZFFPlay::compute_target_delay(double delay, VideoState *is)
 {
     double sync_threshold, diff = 0;
 
@@ -840,7 +973,7 @@ double FSPlay::compute_target_delay(double delay, VideoState *is)
     return delay;
 }
 
-double FSPlay::vp_duration(VideoState *is, Frame *vp, Frame *nextvp) {
+double WZFFPlay::vp_duration(VideoState *is, Frame *vp, Frame *nextvp) {
     if (vp->serial == nextvp->serial) {
         double duration = nextvp->pts - vp->pts;
         if (isnan(duration) || duration <= 0 || duration > is->max_frame_duration)
@@ -852,14 +985,14 @@ double FSPlay::vp_duration(VideoState *is, Frame *vp, Frame *nextvp) {
     }
 }
 
-void FSPlay::update_video_pts(VideoState *is, double pts, int64_t pos, int serial) {
+void WZFFPlay::update_video_pts(VideoState *is, double pts, int64_t pos, int serial) {
     /* update current video pts */
     set_clock(&is->vidclk, pts, serial);
     sync_clock_to_slave(&is->extclk, &is->vidclk);
 }
 
 /* called to display each frame */
-void FSPlay::video_refresh(void *opaque, double *remaining_time) {
+void WZFFPlay::video_refresh(void *opaque, double *remaining_time) {
     VideoState *is = (VideoState *)opaque;
     double time;
 
@@ -974,7 +1107,7 @@ display:
     }
 }
 
-int FSPlay::queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial)
+int WZFFPlay::queue_picture(VideoState *is, AVFrame *src_frame, double pts, double duration, int64_t pos, int serial)
 {
     Frame *vp;
 
@@ -1003,7 +1136,7 @@ int FSPlay::queue_picture(VideoState *is, AVFrame *src_frame, double pts, double
     return 0;
 }
 
-int FSPlay::get_video_frame(VideoState *is, AVFrame *frame)
+int WZFFPlay::get_video_frame(VideoState *is, AVFrame *frame)
 {
     int got_picture;
 
@@ -1037,7 +1170,7 @@ int FSPlay::get_video_frame(VideoState *is, AVFrame *frame)
 }
 
 #if CONFIG_AVFILTER
-int FSPlay::configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
+int WZFFPlay::configure_filtergraph(AVFilterGraph *graph, const char *filtergraph,
                                  AVFilterContext *source_ctx, AVFilterContext *sink_ctx)
 {
     int ret, i;
@@ -1080,7 +1213,7 @@ fail:
     return ret;
 }
 
-int FSPlay::configure_video_filters(AVFilterGraph *graph, VideoState *is, const char *vfilters, AVFrame *frame)
+int WZFFPlay::configure_video_filters(AVFilterGraph *graph, VideoState *is, const char *vfilters, AVFrame *frame)
 {
     enum AVPixelFormat pix_fmts[FF_ARRAY_ELEMS(sdl_texture_format_map)];
     char sws_flags_str[512] = "";
@@ -1176,7 +1309,7 @@ fail:
     return ret;
 }
 
-int FSPlay::configure_audio_filters(VideoState *is, const char *afilters, int force_output_format)
+int WZFFPlay::configure_audio_filters(VideoState *is, const char *afilters, int force_output_format)
 {
     const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_S16, AV_SAMPLE_FMT_NONE };
     int sample_rates[2] = { 0, -1 };
@@ -1256,11 +1389,11 @@ end:
 
 int audio_thread_c(void *arg)
 {
-    FSPlay *play = (FSPlay *)arg;
+    WZFFPlay *play = (WZFFPlay *)arg;
     return play->audio_thread(play->is);
 }
 
-int FSPlay::audio_thread(void *arg)
+int WZFFPlay::audio_thread(void *arg)
 {
     VideoState *is = (VideoState *)arg;
     AVFrame *frame = av_frame_alloc();
@@ -1347,7 +1480,7 @@ int FSPlay::audio_thread(void *arg)
     return ret;
 }
 
-int FSPlay::decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name, void* arg)
+int WZFFPlay::decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name, void* arg)
 {
     char new_thread_name[20] = "";
     av_strlcatf(new_thread_name, sizeof(new_thread_name), "%s_%d", thread_name, play_serial);
@@ -1362,11 +1495,11 @@ int FSPlay::decoder_start(Decoder *d, int (*fn)(void *), const char *thread_name
 
 int video_thread_c(void *arg)
 {
-    FSPlay *play = (FSPlay *)arg;
+    WZFFPlay *play = (WZFFPlay *)arg;
     return play->video_thread(play->is);
 }
 
-int FSPlay::video_thread(void *arg)
+int WZFFPlay::video_thread(void *arg)
 {
     VideoState *is = (VideoState *)arg;
     AVFrame *frame = av_frame_alloc();
@@ -1472,11 +1605,11 @@ int FSPlay::video_thread(void *arg)
 
 int subtitle_thread_c(void *arg)
 {
-    FSPlay *play = (FSPlay *)arg;
+    WZFFPlay *play = (WZFFPlay *)arg;
     return play->subtitle_thread(play->is);
 }
 
-int FSPlay::subtitle_thread(void *arg)
+int WZFFPlay::subtitle_thread(void *arg)
 {
     VideoState *is = (VideoState *)arg;
     Frame *sp;
@@ -1511,7 +1644,7 @@ int FSPlay::subtitle_thread(void *arg)
 }
 
 /* copy samples for viewing in editor window */
-void FSPlay::update_sample_display(VideoState *is, short *samples, int samples_size)
+void WZFFPlay::update_sample_display(VideoState *is, short *samples, int samples_size)
 {
     int size, len;
 
@@ -1531,7 +1664,7 @@ void FSPlay::update_sample_display(VideoState *is, short *samples, int samples_s
 
 /* return the wanted number of samples to get better sync if sync_type is video
  * or external master clock */
-int FSPlay::synchronize_audio(VideoState *is, int nb_samples)
+int WZFFPlay::synchronize_audio(VideoState *is, int nb_samples)
 {
     int wanted_nb_samples = nb_samples;
 
@@ -1579,7 +1712,7 @@ int FSPlay::synchronize_audio(VideoState *is, int nb_samples)
  * stored in is->audio_buf, with size in bytes given by the return
  * value.
  */
-int FSPlay::audio_decode_frame(VideoState *is)
+int WZFFPlay::audio_decode_frame(VideoState *is)
 {
     int data_size, resampled_data_size;
     int64_t dec_channel_layout;
@@ -1691,11 +1824,11 @@ int FSPlay::audio_decode_frame(VideoState *is)
 /* prepare a new audio buffer */
 void sdl_audio_callback_c(void *opaque, uint8_t *stream, int len)
 {
-    FSPlay *play = (FSPlay *)opaque;
+    WZFFPlay *play = (WZFFPlay *)opaque;
     play->sdl_audio_callback(play->is, stream, len);
 }
 
-void FSPlay::sdl_audio_callback(void *opaque, uint8_t *stream, int len)
+void WZFFPlay::sdl_audio_callback(void *opaque, uint8_t *stream, int len)
 {
     VideoState *is = (VideoState *)opaque;
     int audio_size, len1;
@@ -1738,7 +1871,7 @@ void FSPlay::sdl_audio_callback(void *opaque, uint8_t *stream, int len)
     }
 }
 
-int FSPlay::audio_open(void *opaque, int64_t wanted_channel_layout, int wanted_nb_channels, int wanted_sample_rate, struct AudioParams *audio_hw_params)
+int WZFFPlay::audio_open(void *opaque, int64_t wanted_channel_layout, int wanted_nb_channels, int wanted_sample_rate, struct AudioParams *audio_hw_params)
 {
     SDL_SetMainReady();
     SDL_AudioSpec wanted_spec, spec;
@@ -1813,7 +1946,7 @@ int FSPlay::audio_open(void *opaque, int64_t wanted_channel_layout, int wanted_n
 }
 
 /* open a given stream. Return 0 if OK */
-int FSPlay::stream_component_open(VideoState *is, int stream_index)
+int WZFFPlay::stream_component_open(VideoState *is, int stream_index)
 {
     AVFormatContext *ic = is->ic;
     AVCodecContext *avctx;
@@ -1971,14 +2104,14 @@ int decode_interrupt_cb(void *ctx)
     return is->abort_request;
 }
 
-int FSPlay::stream_has_enough_packets(AVStream *st, int stream_id, PacketQueue *queue) {
+int WZFFPlay::stream_has_enough_packets(AVStream *st, int stream_id, PacketQueue *queue) {
     return stream_id < 0 ||
            queue->abort_request ||
            (st->disposition & AV_DISPOSITION_ATTACHED_PIC) ||
-           queue->nb_packets > MIN_FRAMES && (!queue->duration || av_q2d(st->time_base) * queue->duration > 1.0);
+           queue->nb_packets > MIN_FRAMES && (!queue->duration || av_q2d(st->time_base) * queue->duration > MIN_SECONDS);
 }
 
-int FSPlay::is_realtime(AVFormatContext *s) {
+int WZFFPlay::is_realtime(AVFormatContext *s) {
     if(   !strcmp(s->iformat->name, "rtp")
        || !strcmp(s->iformat->name, "rtsp")
        || !strcmp(s->iformat->name, "sdp")
@@ -1995,11 +2128,11 @@ int FSPlay::is_realtime(AVFormatContext *s) {
 
 /* this thread gets the stream from the disk or the network */
 int read_thread_c(void *arg) {
-    FSPlay *play = (FSPlay *)arg;
+    WZFFPlay *play = (WZFFPlay *)arg;
     return play->read_thread(play->is);
 }
 
-int FSPlay::read_thread(void *arg) {
+int WZFFPlay::read_thread(void *arg) {
     VideoState *is = (VideoState *)arg;
     AVFormatContext *ic = NULL;
     int err, i, ret;
@@ -2170,6 +2303,16 @@ int FSPlay::read_thread(void *arg) {
         ret = -1;
         goto fail;
     }
+    
+    if (is->audio_stream >= 0) {
+        is->audioq.is_buffer_indicator = 1;
+        is->buffer_indicator_queue = &is->audioq;
+    } else if (is->video_stream >= 0) {
+        is->videoq.is_buffer_indicator = 1;
+        is->buffer_indicator_queue = &is->videoq;
+    } else {
+        assert("invalid streams");
+    }
 
     if (infinite_buffer < 0 && is->realtime)
         infinite_buffer = 1;
@@ -2201,6 +2344,7 @@ int FSPlay::read_thread(void *arg) {
 // FIXME the +-2 is due to rounding being not done in the correct direction in generation
 //      of the seek_pos/seek_rel variables
 
+            ffp_toggle_buffering(1);
             ret = avformat_seek_file(is->ic, -1, seek_min, seek_target, seek_max, is->seek_flags);
             if (ret < 0) {
                 av_log(NULL, AV_LOG_ERROR,
@@ -2230,6 +2374,7 @@ int FSPlay::read_thread(void *arg) {
             if (is->paused)
                 step_to_next_frame(is);
             completed = 0;
+            ffp_toggle_buffering(1);
         }
         if (is->queue_attachments_req) {
             if (is->video_st && is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC) {
@@ -2248,6 +2393,9 @@ int FSPlay::read_thread(void *arg) {
             || (stream_has_enough_packets(is->audio_st, is->audio_stream, &is->audioq) &&
                 stream_has_enough_packets(is->video_st, is->video_stream, &is->videoq) &&
                 stream_has_enough_packets(is->subtitle_st, is->subtitle_stream, &is->subtitleq)))) {
+            if (!is->eof) {
+                ffp_toggle_buffering(0);
+            }
             /* wait 10 ms */
             SDL_LockMutex(wait_mutex);
             SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);
@@ -2272,13 +2420,14 @@ int FSPlay::read_thread(void *arg) {
                         continue;
                 } else {
                     completed = 1;
+                    ffp_toggle_buffering(0);
                     toggle_pause(is);
                     if ((ic->pb && ic->pb->error) || ret == AVERROR_EXIT) {
-                        if (statusChangeCallback)
-                            statusChangeCallback(openglesView, FSPlayStatus_error);
+                        if (statusChangeCallback && openglesView)
+                            statusChangeCallback(openglesView, WZFFPlayStatus_error);
                     } else {
-                        if (statusChangeCallback)
-                            statusChangeCallback(openglesView, FSPlayStatus_completed);
+                        if (statusChangeCallback && openglesView)
+                            statusChangeCallback(openglesView, WZFFPlayStatus_completed);
                     }
                 }
             }
@@ -2292,7 +2441,11 @@ int FSPlay::read_thread(void *arg) {
                     packet_queue_put_nullpacket(&is->audioq, is->audio_stream);
                 if (is->subtitle_stream >= 0)
                     packet_queue_put_nullpacket(&is->subtitleq, is->subtitle_stream);
+                ffp_check_buffering_l();
                 is->eof = 1;
+            }
+            if (is->eof) {
+                ffp_toggle_buffering(0);
             }
             if (ic->pb && ic->pb->error)
                 break;
@@ -2303,6 +2456,7 @@ int FSPlay::read_thread(void *arg) {
         } else {
             is->eof = 0;
         }
+        ffp_check_buffering_l();
         /* check if packet is in play range specified by user, then queue, otherwise discard */
         stream_start_time = ic->streams[pkt->stream_index]->start_time;
         pkt_ts = pkt->pts == AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
@@ -2319,7 +2473,9 @@ int FSPlay::read_thread(void *arg) {
         } else if (pkt->stream_index == is->subtitle_stream && pkt_in_play_range) {
             packet_queue_put(&is->subtitleq, pkt);
         } else {
-            av_packet_unref(pkt);
+            if (pkt->size > 0) {
+                av_packet_unref(pkt);
+            }
         }
     }
 
@@ -2337,11 +2493,11 @@ int FSPlay::read_thread(void *arg) {
 }
 
 int video_refresh_thread_c(void *arg) {
-    FSPlay *play = (FSPlay *)arg;
+    WZFFPlay *play = (WZFFPlay *)arg;
     return play->video_refresh_thread(play->is);
 }
 
-int FSPlay::video_refresh_thread(void *arg) {
+int WZFFPlay::video_refresh_thread(void *arg) {
     VideoState *is = (VideoState *)arg;
     double remaining_time = 0.0;
     //每remaining_time运行一次循环（刷新一次屏幕）
@@ -2358,7 +2514,7 @@ int FSPlay::video_refresh_thread(void *arg) {
     return 0;
 }
 
-VideoState *FSPlay::stream_open(VideoState *is, const char *filename, AVInputFormat *iformat) {
+VideoState *WZFFPlay::stream_open(VideoState *is, const char *filename, AVInputFormat *iformat) {
     if (!is)
         return NULL;
     is->last_video_stream = is->video_stream = -1;
@@ -2400,7 +2556,6 @@ VideoState *FSPlay::stream_open(VideoState *is, const char *filename, AVInputFor
     startup_volume = av_clip(startup_volume, 0, 100);
     startup_volume = av_clip(SDL_MIX_MAXVOLUME * startup_volume / 100, 0, SDL_MIX_MAXVOLUME);
     is->audio_volume = startup_volume;
-    is->muted = 0;
     is->av_sync_type = av_sync_type;
     
     {
@@ -2422,7 +2577,7 @@ fail:
     return is;
 }
 
-void FSPlay::stream_cycle_channel(VideoState *is, int codec_type)
+void WZFFPlay::stream_cycle_channel(VideoState *is, int codec_type)
 {
     AVFormatContext *ic = is->ic;
     int start_index, stream_index;
@@ -2500,7 +2655,7 @@ void FSPlay::stream_cycle_channel(VideoState *is, int codec_type)
     stream_component_open(is, stream_index);
 }
 
-void FSPlay::seek_chapter(VideoState *is, int incr)
+void WZFFPlay::seek_chapter(VideoState *is, int incr)
 {
     int64_t pos = get_master_clock(is) * AV_TIME_BASE;
     int i;
@@ -2527,25 +2682,25 @@ void FSPlay::seek_chapter(VideoState *is, int incr)
                                  AV_TIME_BASE_Q), 0, 0);
 }
 
-int FSPlay::opt_frame_size(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_frame_size(void *optctx, const char *opt, const char *arg)
 {
     av_log(NULL, AV_LOG_WARNING, "Option -s is deprecated, use -video_size.\n");
     return cmdUtils->opt_default(NULL, "video_size", arg);
 }
 
-int FSPlay::opt_width(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_width(void *optctx, const char *opt, const char *arg)
 {
     screen_width = cmdUtils->parse_number_or_die(opt, arg, OPT_INT64, 1, INT_MAX);
     return 0;
 }
 
-int FSPlay::opt_height(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_height(void *optctx, const char *opt, const char *arg)
 {
     screen_height = cmdUtils->parse_number_or_die(opt, arg, OPT_INT64, 1, INT_MAX);
     return 0;
 }
 
-int FSPlay::opt_format(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_format(void *optctx, const char *opt, const char *arg)
 {
     file_iformat = av_find_input_format(arg);
     if (!file_iformat) {
@@ -2555,17 +2710,17 @@ int FSPlay::opt_format(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSPlay::set_input_format(const char *short_name) {
+int WZFFPlay::set_input_format(const char *short_name) {
     return opt_format(NULL, NULL, short_name);
 }
 
-int FSPlay::opt_frame_pix_fmt(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_frame_pix_fmt(void *optctx, const char *opt, const char *arg)
 {
     av_log(NULL, AV_LOG_WARNING, "Option -pix_fmt is deprecated, use -pixel_format.\n");
     return cmdUtils->opt_default(NULL, "pixel_format", arg);
 }
 
-int FSPlay::opt_sync(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_sync(void *optctx, const char *opt, const char *arg)
 {
     if (!strcmp(arg, "audio"))
         av_sync_type = AV_SYNC_AUDIO_MASTER;
@@ -2580,19 +2735,19 @@ int FSPlay::opt_sync(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSPlay::opt_seek(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_seek(void *optctx, const char *opt, const char *arg)
 {
     start_time = cmdUtils->parse_time_or_die(opt, arg, 1);
     return 0;
 }
 
-int FSPlay::opt_duration(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_duration(void *optctx, const char *opt, const char *arg)
 {
     duration = cmdUtils->parse_time_or_die(opt, arg, 1);
     return 0;
 }
 
-int FSPlay::opt_show_mode(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_show_mode(void *optctx, const char *opt, const char *arg)
 {
     show_mode = !strcmp(arg, "video") ? SHOW_MODE_VIDEO :
                 !strcmp(arg, "waves") ? SHOW_MODE_WAVES :
@@ -2601,7 +2756,7 @@ int FSPlay::opt_show_mode(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-void FSPlay::opt_input_file(void *optctx, const char *filename)
+void WZFFPlay::opt_input_file(void *optctx, const char *filename)
 {
     if (input_filename) {
         av_log(NULL, AV_LOG_FATAL,
@@ -2614,7 +2769,7 @@ void FSPlay::opt_input_file(void *optctx, const char *filename)
     input_filename = (char *)filename;
 }
 
-int FSPlay::opt_codec(void *optctx, const char *opt, const char *arg)
+int WZFFPlay::opt_codec(void *optctx, const char *opt, const char *arg)
 {
    const char *spec = strchr(opt, ':');
    if (!spec) {
@@ -2638,20 +2793,20 @@ int FSPlay::opt_codec(void *optctx, const char *opt, const char *arg)
 
 int dummy;
 
-void FSPlay::show_usage(void)
+void WZFFPlay::show_usage(void)
 {
     av_log(NULL, AV_LOG_INFO, "Simple media player\n");
     av_log(NULL, AV_LOG_INFO, "usage: %s [options] input_file\n", program_name);
     av_log(NULL, AV_LOG_INFO, "\n");
 }
 
-void FSPlay::set_format_opt(const char *key, const char *value)
+void WZFFPlay::set_format_opt(const char *key, const char *value)
 {
     av_dict_set(&cmdUtils->format_opts, key, value, 0);
 }
 
 /* Called from the main */
-int FSPlay::ffplay_main(void *openglesView, char *url, SetParamsCallback paramsCallback, RenderFrameCallback renderCallback)
+int WZFFPlay::ffplay_main(void *openglesView, char *url, SetParamsCallback paramsCallback, RenderFrameCallback renderCallback)
 {
     this->renderCallback = renderCallback;
     play_serial = init_serial ++;
@@ -2660,7 +2815,7 @@ int FSPlay::ffplay_main(void *openglesView, char *url, SetParamsCallback paramsC
     this->openglesView = openglesView;
     input_filename = url;
     
-    cmdUtils = new FSCmdUtils();
+    cmdUtils = new WZFFCmdUtils();
 
     cmdUtils->init_dynload();
 
@@ -2682,7 +2837,7 @@ int FSPlay::ffplay_main(void *openglesView, char *url, SetParamsCallback paramsC
     }
     
     //set options
-    if (paramsCallback != nullptr) {
+    if (paramsCallback != NULL && openglesView != NULL) {
         paramsCallback(openglesView);
     }
 
@@ -2705,6 +2860,8 @@ int FSPlay::ffplay_main(void *openglesView, char *url, SetParamsCallback paramsC
     if (!is) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
     }
+    
+    ffp_toggle_buffering(1);
     
     //Test crash
 //    int a[10] = {0};

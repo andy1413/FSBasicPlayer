@@ -263,7 +263,7 @@ void *grow_array(void *array, int elem_size, int *size, int new_size);
  */
 void exit_program(int ret) av_noreturn;
 
-class FSCmdUtils {
+class WZFFCmdUtils {
 public:
     AVDictionary *sws_dict;
     AVDictionary *swr_opts;

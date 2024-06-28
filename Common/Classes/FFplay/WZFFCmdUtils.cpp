@@ -67,7 +67,7 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
-#include "FSCmdUtils.hpp"
+#include "WZFFCmdUtils.hpp"
 
 static int init_report(const char *env);
 
@@ -82,12 +82,12 @@ enum show_muxdemuxers {
     SHOW_MUXERS,
 };
 
-void FSCmdUtils::init_opts(void)
+void WZFFCmdUtils::init_opts(void)
 {
     av_dict_set(&sws_dict, "flags", "bicubic", 0);
 }
 
-void FSCmdUtils::uninit_opts(void)
+void WZFFCmdUtils::uninit_opts(void)
 {
     av_dict_free(&swr_opts);
     av_dict_free(&sws_dict);
@@ -117,7 +117,7 @@ void log_callback_report(void *ptr, int level, const char *fmt, va_list vl)
     }
 }
 
-void FSCmdUtils::init_dynload(void)
+void WZFFCmdUtils::init_dynload(void)
 {
 #if HAVE_SETDLLDIRECTORY && defined(_WIN32)
     /* Calling SetDllDirectory with the empty string (but not NULL) removes the
@@ -128,7 +128,7 @@ void FSCmdUtils::init_dynload(void)
 
 static void (*program_exit)(int ret);
 
-void FSCmdUtils::register_exit(void (*cb)(int ret))
+void WZFFCmdUtils::register_exit(void (*cb)(int ret))
 {
     program_exit = cb;
 }
@@ -141,7 +141,7 @@ void exit_program(int ret)
     exit(ret);
 }
 
-double FSCmdUtils::parse_number_or_die(const char *context, const char *numstr, int type,
+double WZFFCmdUtils::parse_number_or_die(const char *context, const char *numstr, int type,
                            double min, double max)
 {
     char *tail;
@@ -162,7 +162,7 @@ double FSCmdUtils::parse_number_or_die(const char *context, const char *numstr, 
     return 0;
 }
 
-int64_t FSCmdUtils::parse_time_or_die(const char *context, const char *timestr,
+int64_t WZFFCmdUtils::parse_time_or_die(const char *context, const char *timestr,
                           int is_duration)
 {
     int64_t us;
@@ -174,7 +174,7 @@ int64_t FSCmdUtils::parse_time_or_die(const char *context, const char *timestr,
     return us;
 }
 
-void FSCmdUtils::show_help_options(const OptionDef *options, const char *msg, int req_flags,
+void WZFFCmdUtils::show_help_options(const OptionDef *options, const char *msg, int req_flags,
                        int rej_flags, int alt_flags)
 {
     const OptionDef *po;
@@ -215,7 +215,7 @@ void show_help_children(const AVClass *cls, int flags)
         show_help_children(child, flags);
 }
 
-const OptionDef *FSCmdUtils::find_option(const OptionDef *po, const char *name)
+const OptionDef *WZFFCmdUtils::find_option(const OptionDef *po, const char *name)
 {
     const char *p = strchr(name, ':');
     int len = p ? p - name : strlen(name);
@@ -244,7 +244,7 @@ static int win32_argc = 0;
  * @param argc_ptr Arguments number (including executable)
  * @param argv_ptr Arguments list.
  */
-void FSCmdUtils::prepare_app_arguments(int *argc_ptr, char ***argv_ptr)
+void WZFFCmdUtils::prepare_app_arguments(int *argc_ptr, char ***argv_ptr)
 {
     char *argstr_flat;
     wchar_t **argv_w;
@@ -292,7 +292,7 @@ inline void prepare_app_arguments(int *argc_ptr, char ***argv_ptr)
 }
 #endif /* HAVE_COMMANDLINETOARGVW */
 
-int FSCmdUtils::write_option(void *optctx, const OptionDef *po, const char *opt,
+int WZFFCmdUtils::write_option(void *optctx, const OptionDef *po, const char *opt,
                         const char *arg)
 {
     /* new-style options contain an offset into optctx, old-style address of
@@ -347,7 +347,7 @@ int FSCmdUtils::write_option(void *optctx, const OptionDef *po, const char *opt,
     return 0;
 }
 
-int FSCmdUtils::parse_option(void *optctx, const char *opt, const char *arg,
+int WZFFCmdUtils::parse_option(void *optctx, const char *opt, const char *arg,
                  const OptionDef *options)
 {
     const OptionDef *po;
@@ -380,7 +380,7 @@ int FSCmdUtils::parse_option(void *optctx, const char *opt, const char *arg,
     return !!(po->flags & HAS_ARG);
 }
 
-void FSCmdUtils::parse_options(void *optctx, int argc, char **argv, const OptionDef *options,
+void WZFFCmdUtils::parse_options(void *optctx, int argc, char **argv, const OptionDef *options,
                    void (*parse_arg_function)(void *, const char*))
 {
     const char *opt;
@@ -411,7 +411,7 @@ void FSCmdUtils::parse_options(void *optctx, int argc, char **argv, const Option
     }
 }
 
-int FSCmdUtils::parse_optgroup(void *optctx, OptionGroup *g)
+int WZFFCmdUtils::parse_optgroup(void *optctx, OptionGroup *g)
 {
     int i, ret;
 
@@ -444,7 +444,7 @@ int FSCmdUtils::parse_optgroup(void *optctx, OptionGroup *g)
     return 0;
 }
 
-int FSCmdUtils::locate_option(int argc, char **argv, const OptionDef *options,
+int WZFFCmdUtils::locate_option(int argc, char **argv, const OptionDef *options,
                   const char *optname)
 {
     const OptionDef *po;
@@ -470,7 +470,7 @@ int FSCmdUtils::locate_option(int argc, char **argv, const OptionDef *options,
     return 0;
 }
 
-void FSCmdUtils::dump_argument(const char *a)
+void WZFFCmdUtils::dump_argument(const char *a)
 {
     const unsigned char *p;
 
@@ -494,7 +494,7 @@ void FSCmdUtils::dump_argument(const char *a)
     fputc('"', report_file);
 }
 
-void FSCmdUtils::check_options(const OptionDef *po)
+void WZFFCmdUtils::check_options(const OptionDef *po)
 {
     while (po->name) {
         if (po->flags & OPT_PERFILE)
@@ -503,7 +503,7 @@ void FSCmdUtils::check_options(const OptionDef *po)
     }
 }
 
-void FSCmdUtils::parse_loglevel(int argc, char **argv, const OptionDef *options)
+void WZFFCmdUtils::parse_loglevel(int argc, char **argv, const OptionDef *options)
 {
     int idx = locate_option(argc, argv, options, "loglevel");
     const char *env;
@@ -532,7 +532,7 @@ void FSCmdUtils::parse_loglevel(int argc, char **argv, const OptionDef *options)
         hide_banner = 1;
 }
 
-const AVOption *FSCmdUtils::opt_find(void *obj, const char *name, const char *unit,
+const AVOption *WZFFCmdUtils::opt_find(void *obj, const char *name, const char *unit,
                             int opt_flags, int search_flags)
 {
     const AVOption *o = av_opt_find(obj, name, unit, opt_flags, search_flags);
@@ -542,7 +542,7 @@ const AVOption *FSCmdUtils::opt_find(void *obj, const char *name, const char *un
 }
 
 #define FLAGS (o->type == AV_OPT_TYPE_FLAGS && (arg[0]=='-' || arg[0]=='+')) ? AV_DICT_APPEND : 0
-int FSCmdUtils::opt_default(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_default(void *optctx, const char *opt, const char *arg)
 {
     const AVOption *o;
     int consumed = 0;
@@ -639,7 +639,7 @@ int FSCmdUtils::opt_default(void *optctx, const char *opt, const char *arg)
  *
  * @return index of the group definition that matched or -1 if none
  */
-int FSCmdUtils::match_group_separator(const OptionGroupDef *groups, int nb_groups,
+int WZFFCmdUtils::match_group_separator(const OptionGroupDef *groups, int nb_groups,
                                  const char *opt)
 {
     int i;
@@ -659,7 +659,7 @@ int FSCmdUtils::match_group_separator(const OptionGroupDef *groups, int nb_group
  * @param group_idx which group definition should this group belong to
  * @param arg argument of the group delimiting option
  */
-void FSCmdUtils::finish_group(OptionParseContext *octx, int group_idx,
+void WZFFCmdUtils::finish_group(OptionParseContext *octx, int group_idx,
                          const char *arg)
 {
     OptionGroupList *l = &octx->groups[group_idx];
@@ -690,7 +690,7 @@ void FSCmdUtils::finish_group(OptionParseContext *octx, int group_idx,
 /*
  * Add an option instance to currently parsed group.
  */
-void FSCmdUtils::add_opt(OptionParseContext *octx, const OptionDef *opt,
+void WZFFCmdUtils::add_opt(OptionParseContext *octx, const OptionDef *opt,
                     const char *key, const char *val)
 {
     int global = !(opt->flags & (OPT_PERFILE | OPT_SPEC | OPT_OFFSET));
@@ -702,7 +702,7 @@ void FSCmdUtils::add_opt(OptionParseContext *octx, const OptionDef *opt,
     g->opts[g->nb_opts - 1].val = val;
 }
 
-void FSCmdUtils::init_parse_context(OptionParseContext *octx,
+void WZFFCmdUtils::init_parse_context(OptionParseContext *octx,
                                const OptionGroupDef *groups, int nb_groups)
 {
     static const OptionGroupDef global_group = { "global" };
@@ -724,7 +724,7 @@ void FSCmdUtils::init_parse_context(OptionParseContext *octx,
     init_opts();
 }
 
-void FSCmdUtils::uninit_parse_context(OptionParseContext *octx)
+void WZFFCmdUtils::uninit_parse_context(OptionParseContext *octx)
 {
     int i, j;
 
@@ -750,7 +750,7 @@ void FSCmdUtils::uninit_parse_context(OptionParseContext *octx)
     uninit_opts();
 }
 
-int FSCmdUtils::split_commandline(OptionParseContext *octx, int argc, char *argv[],
+int WZFFCmdUtils::split_commandline(OptionParseContext *octx, int argc, char *argv[],
                       const OptionDef *options,
                       const OptionGroupDef *groups, int nb_groups)
 {
@@ -856,7 +856,7 @@ do {                                                                           \
     return 0;
 }
 
-int FSCmdUtils::opt_cpuflags(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_cpuflags(void *optctx, const char *opt, const char *arg)
 {
     int ret;
     unsigned flags = av_get_cpu_flags();
@@ -868,7 +868,7 @@ int FSCmdUtils::opt_cpuflags(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::opt_loglevel(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_loglevel(void *optctx, const char *opt, const char *arg)
 {
     const struct { const char *name; int level; } log_levels[] = {
         { "quiet"  , AV_LOG_QUIET   },
@@ -947,7 +947,7 @@ end:
     return 0;
 }
 
-void FSCmdUtils::expand_filename_template(AVBPrint *bp, const char *template_c,
+void WZFFCmdUtils::expand_filename_template(AVBPrint *bp, const char *template_c,
                                      struct tm *tm)
 {
     int c;
@@ -975,7 +975,7 @@ void FSCmdUtils::expand_filename_template(AVBPrint *bp, const char *template_c,
     }
 }
 
-int FSCmdUtils::init_report(const char *env)
+int WZFFCmdUtils::init_report(const char *env)
 {
     char *filename_template = NULL;
     char *key, *val;
@@ -1053,12 +1053,12 @@ int FSCmdUtils::init_report(const char *env)
     return 0;
 }
 
-int FSCmdUtils::opt_report(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_report(void *optctx, const char *opt, const char *arg)
 {
     return init_report(NULL);
 }
 
-int FSCmdUtils::opt_max_alloc(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_max_alloc(void *optctx, const char *opt, const char *arg)
 {
     char *tail;
     size_t max;
@@ -1072,7 +1072,7 @@ int FSCmdUtils::opt_max_alloc(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::opt_timelimit(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::opt_timelimit(void *optctx, const char *opt, const char *arg)
 {
 #if HAVE_SETRLIMIT
     int lim = parse_number_or_die(opt, arg, OPT_INT64, 0, INT_MAX);
@@ -1085,7 +1085,7 @@ int FSCmdUtils::opt_timelimit(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-void FSCmdUtils::print_error(const char *filename, int err)
+void WZFFCmdUtils::print_error(const char *filename, int err)
 {
     char errbuf[128];
     const char *errbuf_ptr = errbuf;
@@ -1184,7 +1184,7 @@ void print_buildconf(int flags, int level)
     }
 }
 
-void FSCmdUtils::show_banner(int argc, char **argv, const OptionDef *options)
+void WZFFCmdUtils::show_banner(int argc, char **argv, const OptionDef *options)
 {
     int idx = locate_option(argc, argv, options, "version");
     if (hide_banner || idx)
@@ -1195,7 +1195,7 @@ void FSCmdUtils::show_banner(int argc, char **argv, const OptionDef *options)
     print_all_libs_info(INDENT|SHOW_VERSION, AV_LOG_INFO);
 }
 
-int FSCmdUtils::show_version(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_version(void *optctx, const char *opt, const char *arg)
 {
     av_log_set_callback(log_callback_help);
     print_program_info (SHOW_COPYRIGHT, AV_LOG_INFO);
@@ -1204,7 +1204,7 @@ int FSCmdUtils::show_version(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_buildconf(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_buildconf(void *optctx, const char *opt, const char *arg)
 {
     av_log_set_callback(log_callback_help);
     print_buildconf      (INDENT|0, AV_LOG_INFO);
@@ -1212,7 +1212,7 @@ int FSCmdUtils::show_buildconf(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_license(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_license(void *optctx, const char *opt, const char *arg)
 {
 #if CONFIG_NONFREE
     printf(
@@ -1356,22 +1356,22 @@ int show_formats_devices(void *optctx, const char *opt, const char *arg, int dev
     return 0;
 }
 
-int FSCmdUtils::show_formats(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_formats(void *optctx, const char *opt, const char *arg)
 {
     return show_formats_devices(optctx, opt, arg, 0, SHOW_DEFAULT);
 }
 
-int FSCmdUtils::show_muxers(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_muxers(void *optctx, const char *opt, const char *arg)
 {
     return show_formats_devices(optctx, opt, arg, 0, SHOW_MUXERS);
 }
 
-int FSCmdUtils::show_demuxers(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_demuxers(void *optctx, const char *opt, const char *arg)
 {
     return show_formats_devices(optctx, opt, arg, 0, SHOW_DEMUXERS);
 }
 
-int FSCmdUtils::show_devices(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_devices(void *optctx, const char *opt, const char *arg)
 {
     return show_formats_devices(optctx, opt, arg, 1, SHOW_DEFAULT);
 }
@@ -1551,7 +1551,7 @@ void print_codecs_for_id(enum AVCodecID id, int encoder)
     printf(")");
 }
 
-int FSCmdUtils::show_codecs(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_codecs(void *optctx, const char *opt, const char *arg)
 {
     const AVCodecDescriptor **codecs;
     unsigned i, nb_codecs = get_codecs_sorted(&codecs);
@@ -1646,19 +1646,19 @@ void print_codecs(int encoder)
     av_free(codecs);
 }
 
-int FSCmdUtils::show_decoders(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_decoders(void *optctx, const char *opt, const char *arg)
 {
     print_codecs(0);
     return 0;
 }
 
-int FSCmdUtils::show_encoders(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_encoders(void *optctx, const char *opt, const char *arg)
 {
     print_codecs(1);
     return 0;
 }
 
-int FSCmdUtils::show_bsfs(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_bsfs(void *optctx, const char *opt, const char *arg)
 {
     const AVBitStreamFilter *bsf = NULL;
     void *opaque = NULL;
@@ -1670,7 +1670,7 @@ int FSCmdUtils::show_bsfs(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_protocols(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_protocols(void *optctx, const char *opt, const char *arg)
 {
     void *opaque = NULL;
     const char *name;
@@ -1685,7 +1685,7 @@ int FSCmdUtils::show_protocols(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_filters(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_filters(void *optctx, const char *opt, const char *arg)
 {
 #if CONFIG_AVFILTER
     const AVFilter *filter = NULL;
@@ -1732,7 +1732,7 @@ int FSCmdUtils::show_filters(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_colors(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_colors(void *optctx, const char *opt, const char *arg)
 {
     const char *name;
     const uint8_t *rgb;
@@ -1746,7 +1746,7 @@ int FSCmdUtils::show_colors(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_pix_fmts(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_pix_fmts(void *optctx, const char *opt, const char *arg)
 {
     const AVPixFmtDescriptor *pix_desc = NULL;
 
@@ -1779,7 +1779,7 @@ int FSCmdUtils::show_pix_fmts(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_layouts(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_layouts(void *optctx, const char *opt, const char *arg)
 {
     int i = 0;
     uint64_t layout, j;
@@ -1808,7 +1808,7 @@ int FSCmdUtils::show_layouts(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::show_sample_fmts(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_sample_fmts(void *optctx, const char *opt, const char *arg)
 {
     int i;
     char fmt_str[128];
@@ -1997,7 +1997,7 @@ void show_help_bsf(const char *name)
         show_help_children(bsf->priv_class, AV_OPT_FLAG_BSF_PARAM);
 }
 
-int FSCmdUtils::show_help(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_help(void *optctx, const char *opt, const char *arg)
 {
     char *topic, *par;
     av_log_set_callback(log_callback_help);
@@ -2035,7 +2035,7 @@ int FSCmdUtils::show_help(void *optctx, const char *opt, const char *arg)
     return 0;
 }
 
-int FSCmdUtils::read_yesno(void)
+int WZFFCmdUtils::read_yesno(void)
 {
     int c = getchar();
     int yesno = (av_toupper(c) == 'Y');
@@ -2046,7 +2046,7 @@ int FSCmdUtils::read_yesno(void)
     return yesno;
 }
 
-FILE *FSCmdUtils::get_preset_file(char *filename, size_t filename_size,
+FILE *WZFFCmdUtils::get_preset_file(char *filename, size_t filename_size,
                       const char *preset_name, int is_path,
                       const char *codec_name)
 {
@@ -2096,7 +2096,7 @@ FILE *FSCmdUtils::get_preset_file(char *filename, size_t filename_size,
     return f;
 }
 
-int FSCmdUtils::check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec)
+int WZFFCmdUtils::check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec)
 {
     int ret = avformat_match_stream_specifier(s, st, spec);
     if (ret < 0)
@@ -2104,7 +2104,7 @@ int FSCmdUtils::check_stream_specifier(AVFormatContext *s, AVStream *st, const c
     return ret;
 }
 
-AVDictionary *FSCmdUtils::filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
+AVDictionary *WZFFCmdUtils::filter_codec_opts(AVDictionary *opts, enum AVCodecID codec_id,
                                 AVFormatContext *s, AVStream *st, AVCodec *codec)
 {
     AVDictionary    *ret = NULL;
@@ -2161,7 +2161,7 @@ AVDictionary *FSCmdUtils::filter_codec_opts(AVDictionary *opts, enum AVCodecID c
     return ret;
 }
 
-AVDictionary **FSCmdUtils::setup_find_stream_info_opts(AVFormatContext *s,
+AVDictionary **WZFFCmdUtils::setup_find_stream_info_opts(AVFormatContext *s,
                                            AVDictionary *codec_opts)
 {
     int i;
@@ -2302,7 +2302,7 @@ static int show_sinks_sources_parse_arg(const char *arg, char **dev, AVDictionar
     return 0;
 }
 
-int FSCmdUtils::show_sources(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_sources(void *optctx, const char *opt, const char *arg)
 {
     AVInputFormat *fmt = NULL;
     char *dev = NULL;
@@ -2340,7 +2340,7 @@ int FSCmdUtils::show_sources(void *optctx, const char *opt, const char *arg)
     return ret;
 }
 
-int FSCmdUtils::show_sinks(void *optctx, const char *opt, const char *arg)
+int WZFFCmdUtils::show_sinks(void *optctx, const char *opt, const char *arg)
 {
     AVOutputFormat *fmt = NULL;
     char *dev = NULL;

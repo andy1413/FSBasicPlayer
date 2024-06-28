@@ -1,21 +1,21 @@
 //
-//  FSVideoView.m
+//  WZMediaPlayerView.m
 //  ffplayios
 //
 //  Created by andy on 2023/1/1.
 //  Copyright © 2023年 andy. All rights reserved.
 //
 
-#import "FSVideoView.h"
+#import "WZMediaPlayerView.h"
 #include <libavcodec/avcodec.h>
 #include <libavutil/dict.h>
-#import "WZBPBundle.h"
+#import "WZEPBundle.h"
 #import <WZFFmpeg/libavcodec/avcodec.h>
 
-# if __has_include(<WZFFPlay/FSPlay.hpp>)
-#import <WZFFPlay/FSPlay.hpp>
+# if __has_include(<WZFFPlay/WZFFPlay.hpp>)
+#import <WZFFPlay/WZFFPlay.hpp>
 #else
-#import "FSPlay.hpp"
+#import "WZFFPlay.hpp"
 #endif
 
 #define GLES2_MAX_PLANE 3
@@ -34,7 +34,7 @@ static const GLfloat textureCoords[8] = {
     1.0f, 0.0f
 };
 
-@interface FSVideoView () {
+@interface WZMediaPlayerView () {
     CAEAGLLayer *_eaglLayer;
     EAGLContext *_context;
     
@@ -55,17 +55,27 @@ static const GLfloat textureCoords[8] = {
     
     GLuint sampler[GLES2_MAX_PLANE];
     
-    FSPlay *_play;
+    WZFFPlay *_play;
+    
+    NSInteger _renderIndex;
+    
+    dispatch_queue_t queue;
 }
+
+@property (nonatomic, assign) BOOL disableAudio;
 
 @end
 
-@implementation FSVideoView
+@implementation WZMediaPlayerView
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
-        _play = new FSPlay();
+        _play = new WZFFPlay();
+        _needRotate = NO;
+        self.mute = YES;
+        self.disableAudio = NO;
+        queue = dispatch_queue_create("WZMediaPlayerView", DISPATCH_QUEUE_SERIAL);
         [self setupRender];
     }
     return self;
@@ -83,12 +93,28 @@ static const GLfloat textureCoords[8] = {
     }
     glFinish();
     
-    _play->ffplay_stream_close();
+    [self privateStop];
+}
+
+- (void)setMute:(BOOL)mute {
+    if (_mute != mute) {
+        _mute = mute;
+        if (_play != NULL) {
+            _play->ffplay_setMuted(_mute);
+        }
+    }
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
+    
+    CGFloat scale = [UIScreen mainScreen].scale;
+    _renderWidth = self.frame.size.width * scale;
+    _renderHeight = self.frame.size.height * scale;
+    
     [self setupRender];
+    
+    
 }
 
 + (void)setLogCallback:(void (*)(void*, int, const char*, va_list))callback {
@@ -102,12 +128,15 @@ static const GLfloat textureCoords[8] = {
     _context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
     [EAGLContext setCurrentContext:_context];
     
+    glDeleteFramebuffers(1, &_frameBuffer);
     glGenFramebuffers(1, &_frameBuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, _frameBuffer);
+    
+    glDeleteRenderbuffers(1, &_renderBuffer);
     glGenRenderbuffers(1, &_renderBuffer);
     glBindRenderbuffer(GL_RENDERBUFFER, _renderBuffer);
-    [_context renderbufferStorage:GL_RENDERBUFFER fromDrawable:_eaglLayer];
     
+    [_context renderbufferStorage:GL_RENDERBUFFER fromDrawable:_eaglLayer];
     glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &_renderWidth);
     glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &_renderHeight);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _renderBuffer);
@@ -165,41 +194,68 @@ static const GLfloat textureCoords[8] = {
 }
 
 - (void)play {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self private_play];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(queue, ^{
+        weakSelf.disableAudio = NO;
+        [weakSelf private_play];
+    });
+}
+
+- (void)playWithDisableAudio {
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(queue, ^{
+        weakSelf.disableAudio = YES;
+        [weakSelf private_play];
     });
 }
 
 - (void)private_play {
-    _play->ffplay_stream_close();
-    _play->ffplay_main((__bridge void *)self, (char *)self.playUrl.UTF8String, setPlayerParams, render_frame);
-    
+    _renderIndex = -1;
+    [self privateStop];
+    _play = new WZFFPlay();
     _play->statusChangeCallback = statusChange;
+    _play->ffplay_main((__bridge void *)self, (char *)self.playUrl.UTF8String, setPlayerParams, render_frame);
+    _play->ffplay_setMuted(self.mute);
+}
+
+- (NSTimeInterval)getCurrentTime {
+    if (_play == nil) return 0;
+    return _play->ffplay_getTimeIntervalMS() / 1000.0;
 }
 
 void render_frame(void *view,VideoFrame *frame) {
     @autoreleasepool {
-        FSVideoView *glkView = (__bridge FSVideoView *)(view);
+        WZMediaPlayerView *glkView = (__bridge WZMediaPlayerView *)(view);
         [glkView render_frame:frame];
     }
 }
 
-void statusChange(void *view, enum FSPlayStatus playStatus) {
-    FSVideoView *glkView = (__bridge FSVideoView *)(view);
+void statusChange(void *view, enum WZFFPlayStatus playStatus) {
+    WZMediaPlayerView *glkView = (__bridge WZMediaPlayerView *)(view);
     [glkView statusChange:playStatus];
 }
 
-- (void)statusChange:(enum FSPlayStatus)playStatus {
+- (void)statusChange:(enum WZFFPlayStatus)playStatus {
+    if (self.statusChangeCallback == nil) return;
     switch (playStatus) {
-        case FSPlayStatus_error:
+        case WZFFPlayStatus_error:
         {
-            self.statusChangeCallback(FSVideoStatus_error);
+            self.statusChangeCallback(WZVideoStatus_error);
         }
             break;
-        case FSPlayStatus_completed:
+        case WZFFPlayStatus_completed:
         {
-            self.statusChangeCallback(FSVideoStatus_completed);
-//            [self play];
+            self.statusChangeCallback(WZVideoStatus_completed);
+        }
+            break;
+        case WZFFPlayStatus_playing:
+        {
+            self.statusChangeCallback(WZVideoStatus_playing);
+        }
+            break;
+        case WZFFPlayStatus_loading:
+        {
+            self.statusChangeCallback(WZVideoStatus_loading);
         }
             break;
         default:
@@ -207,12 +263,35 @@ void statusChange(void *view, enum FSPlayStatus playStatus) {
     }
 }
 
+- (void)togglePause {
+    if (_play != nil) {
+        _play->ffplay_pause();
+    }
+}
+
+- (BOOL)isStoped {
+    return _play == nil;
+}
+
 - (void)stop {
-    _play->ffplay_stream_close();
+    dispatch_async(queue, ^{
+        [self privateStop];
+    });
+}
+
+- (void)privateStop {
+    if (_play != nil) {
+        _play->ffplay_stream_close();
+        delete _play;
+        _play = nil;
+    }
+    if (self.statusChangeCallback) {
+        self.statusChangeCallback(WZVideoStatus_stoped);
+    }
 }
 
 void setPlayerParams(void *view) {
-    FSVideoView *videoView = (__bridge FSVideoView *)view;
+    WZMediaPlayerView *videoView = (__bridge WZMediaPlayerView *)view;
     [videoView setPlayParams];
 }
 
@@ -235,10 +314,19 @@ void setPlayerParams(void *view) {
 - (void)setDashParams {
     _play->start_time = 1000000 * _startSecond;
 //    _play->opt_add_vfilter(nullptr, "vf", "setpts=0.25*PTS");
-    _play->audio_disable = 1;
+    if (_needRotate) {
+        _play->opt_add_vfilter(nullptr, "vf", "transpose=1");
+    }
+    _play->opt_sync(NULL, "sync", "video");
+    
+    _play->audio_disable = self.disableAudio;
+    _play->ffplay_setMuted(_mute);
 }
 
 - (void)setConcatParams {
+    if (_needRotate) {
+        _play->opt_add_vfilter(nullptr, "vf", "transpose=1");
+    }
     _play->set_input_format("concat");
     _play->set_format_opt("safe", "0");
     _play->set_format_opt("protocol_whitelist", "file,http,https,crypto,data,tls,tcp");
@@ -249,8 +337,27 @@ void setPlayerParams(void *view) {
 //    _play->ffplay_pause();
 }
 
+- (void)reloadIfChangeFrame:(VideoFrame *)frame {
+    if (_renderWidth != frame->width || _renderHeight != frame->height) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            if (_frameChangeCallback) {
+                _frameChangeCallback(CGSizeMake(frame->width, frame->height));
+            }
+            [self setNeedsLayout];
+            [self layoutIfNeeded];
+        });
+    }
+}
+
 #pragma mark - render_frame
 - (void)render_frame:(VideoFrame *)frame {
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    [self reloadIfChangeFrame:frame];
+    _renderIndex ++;
+    if (_renderChangeCallback) {
+        _renderChangeCallback(_renderIndex);
+    }
+    
     [EAGLContext setCurrentContext:_context];
     [self loadShaders:frame];
 
@@ -296,14 +403,19 @@ void setPlayerParams(void *view) {
     glVertexAttribPointer(vsh_position, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), vertices);
     glVertexAttribPointer(vsh_texcoord, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), textureCoords);
 
-    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, _frameBuffer);
+    
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glViewport(0, 0, _renderWidth, _renderHeight);
     glUniformMatrix4fv(vsh_matrix, 1, GL_FALSE, GLKMatrix4Identity.m);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glBindRenderbuffer(GL_RENDERBUFFER, _renderBuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _renderBuffer);
     //present render
     [_context presentRenderbuffer:GL_RENDERBUFFER];
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     if ((_programId)) {
         if (_vertexShader){
@@ -333,7 +445,7 @@ void setPlayerParams(void *view) {
 }
 
 GLuint compileShader(NSString *shaderName, GLenum shaderType) {
-    NSString *shaderPath = [WZBPBundle pathForName:shaderName ofType:@"glsl"];
+    NSString *shaderPath = [WZEPBundle pathForName:shaderName ofType:@"glsl"];
     NSError *error;
     NSString *shaderString = [NSString stringWithContentsOfFile:shaderPath encoding:NSUTF8StringEncoding error:&error];
     if (!shaderString) {
