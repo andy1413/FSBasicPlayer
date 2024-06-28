@@ -1,5 +1,4 @@
 # WZEventPlayer README
-=============
 
 WZEventPlayer is Wyze app event player lib, it used to play event in iOS and Android.
 
